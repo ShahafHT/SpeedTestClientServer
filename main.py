@@ -8,7 +8,7 @@ def main():
     print("Entering main function")
     parser = argparse.ArgumentParser(description="Network Speed Test")
     parser.add_argument('role', choices=['client', 'server'], help="Role to play (client or server)")
-    parser.add_argument('--host', default='127.0.0.1', help="Server IP address")
+    parser.add_argument('--host', default='0.0.0.0', help="Server IP address")
     parser.add_argument('--port', type=int, default=5001, help="Server port")
     args = parser.parse_args()
 
@@ -16,7 +16,7 @@ def main():
 
     if args.role == 'server':
         print("Starting server...")
-        server = SpeedTestServer(host=args.host, port=args.port)
+        server = SpeedTestServer(ip=args.host, port=args.port)
         server.start()
     elif args.role == 'client':
         print("Starting client...")

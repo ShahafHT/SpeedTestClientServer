@@ -1,73 +1,67 @@
 import socket
+import struct
 import threading
 import time
-import struct
 
-# Server class to handle incoming connections and speed test requests
 class SpeedTestServer:
-    def __init__(self, host='0.0.0.0', port=5001):
-        self.host = host
+    def __init__(self, ip, port):
+        self.ip = ip
         self.port = port
-        self.tcp_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.udp_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.actual_ip = socket.gethostbyname(socket.gethostname())  # Get the actual IP address of the server
+        self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         
-        # Set SO_REUSEADDR option for UDP socket
-        self.udp_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        
-        self.tcp_server.bind((self.host, self.port))
-        self.udp_server.bind((self.host, self.port + 1))
-        self.tcp_server.listen(5)
-        print(f"TCP server listening on {self.host}:{self.port}")
-        print(f"UDP server listening on {self.host}:{self.port + 1}")
+        self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        self.udp_socket.bind((self.ip, self.port + 1))
+        self.broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        self.tcp_socket.bind((self.ip, self.port))
+        self.tcp_socket.listen(5)
+        print(f"Server listening on {self.actual_ip}:{self.port} (TCP) and {self.port + 1} (UDP)")
 
-    # Method to handle TCP connections
+    def send_offers(self):
+        while True:
+            offer_message = struct.pack('!IB', 0xabcddcba, 0x2)
+            self.broadcast_socket.sendto(offer_message, ('<broadcast>', self.port + 2))
+            print(f"Sent offer from {self.actual_ip}")
+            time.sleep(1)
+
+    def handle_udp_client(self):
+        while True:
+            data, addr = self.udp_socket.recvfrom(1024)
+            if not data:
+                break
+            print(f"Received UDP data from {addr}: {data}")
+            # Simulate sending the requested data
+            for i in range(10):
+                self.udp_socket.sendto(b'0' * 1024, addr)
+                time.sleep(0.1)
+
     def handle_tcp_client(self, client_socket):
-        print("TCP client connected.")
         try:
             while True:
-                # Receive data from the client
                 data = client_socket.recv(1024)
                 if not data:
                     break
                 print(f"Received TCP data: {data}")
-                # Simulate sending back a speed test response
-                time.sleep(0.1)  # Simulate processing delay
-                client_socket.sendall(data)  # Echo back the received data
+                # Simulate sending the requested data
+                for i in range(10):
+                    client_socket.sendall(b'0' * 1024)
+                    time.sleep(0.1)
         except Exception as e:
             print(f"Error: {e}")
         finally:
             client_socket.close()
-            print("TCP client disconnected.")
 
-    # Method to handle UDP connections
-    def handle_udp_client(self):
-        print("UDP server ready to receive data.")
-        while True:
-            try:
-                data, addr = self.udp_server.recvfrom(1024)
-                print(f"Received UDP data from {addr}: {data}")
-                # Simulate sending back a speed test response
-                time.sleep(0.1)  # Simulate processing delay
-                self.udp_server.sendto(data, addr)  # Echo back the received data
-            except Exception as e:
-                print(f"Error: {e}")
-
-    # Method to start the server
     def start(self):
-        tcp_thread = threading.Thread(target=self.tcp_server_loop)
         udp_thread = threading.Thread(target=self.handle_udp_client)
-        tcp_thread.start()
         udp_thread.start()
-        tcp_thread.join()
-        udp_thread.join()
 
-    # TCP server loop to accept connections
-    def tcp_server_loop(self):
+        offer_thread = threading.Thread(target=self.send_offers)
+        offer_thread.start()
+
         while True:
-            try:
-                client_socket, addr = self.tcp_server.accept()
-                print(f"Accepted TCP connection from {addr}.")
-                client_thread = threading.Thread(target=self.handle_tcp_client, args=(client_socket,))
-                client_thread.start()
-            except Exception as e:
-                print(f"Error: {e}")
+            client_socket, addr = self.tcp_socket.accept()
+            print(f"Accepted TCP connection from {addr}")
+            tcp_thread = threading.Thread(target=self.handle_tcp_client, args=(client_socket,))
+            tcp_thread.start()
