@@ -21,8 +21,8 @@ class SpeedTestServer:
 
     def send_offers(self):
         while True:
-            offer_message = struct.pack('!IB', 0xabcddcba, 0x2)
-            self.broadcast_socket.sendto(offer_message, ('<broadcast>', self.port + 2))
+            offer_message = struct.pack('!IBHH', 0xabcddcba, 0x2, self.port + 1, self.port)
+            self.broadcast_socket.sendto(offer_message, ('255.255.255.255', self.port + 2))
             print(f"Sent offer from {self.actual_ip}")
             time.sleep(1)
 
@@ -32,22 +32,33 @@ class SpeedTestServer:
             if not data:
                 break
             print(f"Received UDP data from {addr}: {data}")
-            # Simulate sending the requested data
-            for i in range(10):
-                self.udp_socket.sendto(b'0' * 1024, addr)
-                time.sleep(0.1)
+            # Unpack the request message
+            magic_cookie, message_type, file_size = struct.unpack('!IBQ', data)
+            if magic_cookie != 0xabcddcba or message_type != 0x3:
+                continue  # Invalid request message
+            # Send the requested data
+            bytes_sent = 0
+            while bytes_sent < file_size:
+                chunk_size = min(1024, file_size - bytes_sent)
+                self.udp_socket.sendto(b'0' * chunk_size, addr)
+                bytes_sent += chunk_size
 
     def handle_tcp_client(self, client_socket):
         try:
-            while True:
-                data = client_socket.recv(1024)
-                if not data:
-                    break
-                print(f"Received TCP data: {data}")
-                # Simulate sending the requested data
-                for i in range(10):
-                    client_socket.sendall(b'0' * 1024)
-                    time.sleep(0.1)
+            data = client_socket.recv(1024)
+            if not data:
+                return
+            print(f"Received TCP data: {data}")
+            # Unpack the request message
+            magic_cookie, message_type, file_size = struct.unpack('!IBQ', data)
+            if magic_cookie != 0xabcddcba or message_type != 0x3:
+                return  # Invalid request message
+            # Send the requested data
+            bytes_sent = 0
+            while bytes_sent < file_size:
+                chunk_size = min(1024, file_size - bytes_sent)
+                client_socket.sendall(b'0' * chunk_size)
+                bytes_sent += chunk_size
         except Exception as e:
             print(f"Error: {e}")
         finally:
