@@ -8,20 +8,28 @@ class SpeedTestClient:
     def __init__(self, listen_port=5003):  # Default to self.port + 2
         self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         
-        # Set SO_REUSEADDR option for UDP socket
+        # Set SO_REUSEPORT option for UDP socket
         self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.udp_socket.bind(('', listen_port))  # Bind to the port used for receiving offers
 
+        # Enable broadcast
+        self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+
     def listen_for_offers(self):
+        buffer = b''
         while True:
-            data, addr = self.udp_socket.recvfrom(1024)
-            if len(data) != 9:
-                print(f"Ignored invalid offer message from {addr}: {data}")
-                continue
-            magic_cookie, message_type, udp_port, tcp_port = struct.unpack('!IBHH', data)
-            if magic_cookie == 0xabcddcba and message_type == 0x2:
-                print(f"Received offer from {addr[0]}: UDP port {udp_port}, TCP port {tcp_port}")
-                return addr[0], udp_port, tcp_port
+            try:
+                data, addr = self.udp_socket.recvfrom(2048)  # Increase buffer size to 2048 bytes
+                buffer += data
+                while len(buffer) >= 9:
+                    offer_message = buffer[:9]
+                    buffer = buffer[9:]
+                    magic_cookie, message_type, udp_port, tcp_port = struct.unpack('!IBHH', offer_message)
+                    if magic_cookie == 0xabcddcba and message_type == 0x2:
+                        print(f"Received offer from {addr[0]}: UDP port {udp_port}, TCP port {tcp_port}")
+                        return addr[0], udp_port, tcp_port
+            except Exception as e:
+                print(f"Error receiving offer: {e}")
 
     def send_udp_request(self, server_ip, udp_port, file_size, udp_index):
         try:
@@ -40,14 +48,17 @@ class SpeedTestClient:
             while bytes_received < file_size:
                 self.udp_socket.settimeout(1)
                 try:
-                    data, addr = self.udp_socket.recvfrom(1024)
+                    data, addr = self.udp_socket.recvfrom(2048)  # Increase buffer size to 2048 bytes
                     if not data:
                         break
                     # Ignore offer messages
                     if len(data) == 9 and data[:4] == struct.pack('!I', 0xabcddcba) and data[4] == 0x2:
                         continue
-                    sequence_number, payload = struct.unpack('!I', data[:4]), data[4:]
-                    bytes_received += len(payload)
+                    magic_cookie, message_type, total_segments, current_segment = struct.unpack('!IBQQ', data[:21])
+                    if magic_cookie != 0xabcddcba or message_type != 0x4:
+                        continue  # Invalid payload message
+                    payload = data[21:]
+                    bytes_received += len(payload)  # Use the length of the payload directly
                     last_packet_time = time.time()
                     # print(f"Received UDP data from {addr}: {data}")
                 except socket.timeout:
@@ -57,9 +68,10 @@ class SpeedTestClient:
             end_time = time.time()
             total_time = end_time - start_time
             speed = (bytes_received * 8) / total_time
-            packet_loss = ((file_size - bytes_received) / file_size) * 100 if file_size > 0 else 0
+            # packet_loss = ((file_size - bytes_received) / file_size) * 100 if file_size > 0 else 0
+            packets_received_percentage = (bytes_received / file_size) * 100 if file_size > 0 else 0
 
-            print(f"UDP transfer #{udp_index} finished, total time: {total_time:.2f} seconds, total speed: {speed:.2f} bits/second, percentage of packets received successfully: {100 - packet_loss:.2f}%")
+            print(f"UDP transfer #{udp_index} finished, total time: {total_time:.2f} seconds, total speed: {speed:.2f} bits/second, percentage of packets received successfully: {packets_received_percentage:.2f}%")
         except Exception as e:
             print(f"Error: {e}")
 
@@ -69,9 +81,7 @@ class SpeedTestClient:
             tcp_socket.connect((server_ip, tcp_port))
             # print(f"Connected to TCP server at {server_ip}:{tcp_port}")
             # Create request message
-            magic_cookie = 0xabcddcba
-            message_type = 0x3
-            request_message = struct.pack('!IBQ', magic_cookie, message_type, file_size)
+            request_message = f"{file_size}\n".encode()
             tcp_socket.sendall(request_message)
             
             start_time = time.time()
@@ -83,7 +93,6 @@ class SpeedTestClient:
                 if not data:
                     break
                 bytes_received += len(data)
-                # print(f"Received TCP data: {data}")
 
             end_time = time.time()
             total_time = end_time - start_time

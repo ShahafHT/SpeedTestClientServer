@@ -38,25 +38,24 @@ class SpeedTestServer:
             if magic_cookie != 0xabcddcba or message_type != 0x3:
                 continue  # Invalid request message
             # Send the requested data with sequence numbers
+            total_segments = (file_size + 1019) // 1020  # Calculate total segments
             bytes_sent = 0
             sequence_number = 0
             while bytes_sent < file_size:
-                chunk_size = min(1024 - 4, file_size - bytes_sent)
-                packet = struct.pack('!I', sequence_number) + b'0' * chunk_size
+                chunk_size = min(1020, file_size - bytes_sent)
+                packet = struct.pack('!IBQQ', 0xabcddcba, 0x4, total_segments, sequence_number) + b'0' * chunk_size
                 self.udp_socket.sendto(packet, addr)
                 bytes_sent += chunk_size
                 sequence_number += 1
 
     def handle_tcp_client(self, client_socket):
         try:
-            data = client_socket.recv(1024)
+            data = client_socket.recv(1024).decode().strip()
             if not data:
                 return
             print(f"Received TCP data: {data}")
-            # Unpack the request message
-            magic_cookie, message_type, file_size = struct.unpack('!IBQ', data)
-            if magic_cookie != 0xabcddcba or message_type != 0x3:
-                return  # Invalid request message
+            # Parse the requested file size
+            file_size = int(data)
             # Send the requested data as a single chunk
             client_socket.sendall(b'0' * file_size)
         except Exception as e:
