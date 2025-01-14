@@ -2,6 +2,7 @@ import socket
 import struct
 import threading
 import time
+import argparse
 
 class SpeedTestServer:
     def __init__(self, ip, port):
@@ -36,12 +37,15 @@ class SpeedTestServer:
             magic_cookie, message_type, file_size = struct.unpack('!IBQ', data)
             if magic_cookie != 0xabcddcba or message_type != 0x3:
                 continue  # Invalid request message
-            # Send the requested data
+            # Send the requested data with sequence numbers
             bytes_sent = 0
+            sequence_number = 0
             while bytes_sent < file_size:
-                chunk_size = min(1024, file_size - bytes_sent)
-                self.udp_socket.sendto(b'0' * chunk_size, addr)
+                chunk_size = min(1024 - 4, file_size - bytes_sent)
+                packet = struct.pack('!I', sequence_number) + b'0' * chunk_size
+                self.udp_socket.sendto(packet, addr)
                 bytes_sent += chunk_size
+                sequence_number += 1
 
     def handle_tcp_client(self, client_socket):
         try:
@@ -53,12 +57,8 @@ class SpeedTestServer:
             magic_cookie, message_type, file_size = struct.unpack('!IBQ', data)
             if magic_cookie != 0xabcddcba or message_type != 0x3:
                 return  # Invalid request message
-            # Send the requested data
-            bytes_sent = 0
-            while bytes_sent < file_size:
-                chunk_size = min(1024, file_size - bytes_sent)
-                client_socket.sendall(b'0' * chunk_size)
-                bytes_sent += chunk_size
+            # Send the requested data as a single chunk
+            client_socket.sendall(b'0' * file_size)
         except Exception as e:
             print(f"Error: {e}")
         finally:
@@ -76,3 +76,16 @@ class SpeedTestServer:
             print(f"Accepted TCP connection from {addr}")
             tcp_thread = threading.Thread(target=self.handle_tcp_client, args=(client_socket,))
             tcp_thread.start()
+
+def main():
+    parser = argparse.ArgumentParser(description="Network Speed Test Server")
+    parser.add_argument('--host', default='0.0.0.0', help="Server IP address")
+    parser.add_argument('--port', type=int, default=5001, help="Server port")
+    args = parser.parse_args()
+
+    print(f"Starting server on {args.host}:{args.port}")
+    server = SpeedTestServer(ip=args.host, port=args.port)
+    server.start()
+
+if __name__ == "__main__":
+    main()

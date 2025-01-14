@@ -9,8 +9,8 @@ def main():
     parser = argparse.ArgumentParser(description="Network Speed Test")
     parser.add_argument('role', choices=['client', 'server'], help="Role to play (client or server)")
     parser.add_argument('--host', default='0.0.0.0', help="Server IP address")
-    parser.add_argument('--port', type=int, default=5001, help="Server port")
-    parser.add_argument('--listen_port', type=int, default=5003, help="Client listen port for offers")  # Default to self.port + 2
+    parser.add.argument('--port', type=int, default=5001, help="Server port")
+    parser.add.argument('--listen_port', type=int, default=5003, help="Client listen port for offers")  # Default to self.port + 2
     args = parser.parse_args()
 
     print(f"Role: {args.role}, Host: {args.host}, Port: {args.port}")
