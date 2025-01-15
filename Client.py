@@ -3,6 +3,7 @@ import threading
 import struct
 import time
 import argparse
+import selectors
 
 class SpeedTestClient:
     def __init__(self, listen_port=5003):  # Default to self.port + 2
@@ -10,27 +11,32 @@ class SpeedTestClient:
         self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         
         self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.udp_socket.bind(('', listen_port-1))  # Bind to the port used for receiving offers
+        self.udp_socket.bind(('', listen_port - 1))  # Bind to the port used for receiving offers
 
         # Enable broadcast on the broadcast socket
         self.broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self.broadcast_socket.bind(('', listen_port))  # Bind to the port used for sending offers
 
-    def listen_for_offers(self):
-        buffer = b''
-        while True:
-            try:
-                data, addr = self.broadcast_socket.recvfrom(2048)  # Increase buffer size to 2048 bytes
-                buffer += data
-                while len(buffer) >= 9:
-                    offer_message = buffer[:9]
-                    buffer = buffer[9:]
-                    magic_cookie, message_type, udp_port, tcp_port = struct.unpack('!IBHH', offer_message)
-                    if magic_cookie == 0xabcddcba and message_type == 0x2:
-                        print(f"Received offer from {addr[0]}: UDP port {udp_port}, TCP port {tcp_port}")
-                        return addr[0], udp_port, tcp_port
-            except Exception as e:
-                print(f"Error receiving offer: {e}")
+        self.selector = selectors.DefaultSelector()
+        self.selector.register(self.broadcast_socket, selectors.EVENT_READ, self.handle_offer)
+
+        self.file_size = int(input("Enter the file size for the speed test (in bytes): "))
+        self.tcp_connections = int(input("Enter the number of TCP connections: "))
+        self.udp_connections = int(input("Enter the number of UDP connections: "))
+
+    def handle_offer(self, broadcast_socket):
+        try:
+            data, addr = broadcast_socket.recvfrom(2048)  # Increase buffer size to 2048 bytes
+            magic_cookie, message_type, udp_port, tcp_port = struct.unpack('!IBHH', data[:9])
+            if magic_cookie == 0xabcddcba and message_type == 0x2:
+                print(f"Received offer from {addr[0]}: UDP port {udp_port}, TCP port {tcp_port}")
+                self.server_ip = addr[0]
+                self.udp_port = udp_port
+                self.tcp_port = tcp_port
+                self.selector.unregister(broadcast_socket)
+                self.start_transfers()
+        except Exception as e:
+            print(f"Error receiving offer: {e}")
 
     def send_udp_request(self, server_ip, udp_port, file_size, udp_index):
         try:
@@ -60,14 +66,14 @@ class SpeedTestClient:
                 except socket.timeout:
                     if time.time() - last_packet_time > 1:
                         print(f"UDP transfer #{udp_index} timed out, closing connection")
-                        break
+                        return
 
             end_time = time.time()
             total_time = end_time - start_time
             speed = (bytes_received * 8) / total_time
             packets_received_percentage = (bytes_received / file_size) * 100 if file_size > 0 else 0
 
-            if packets_received_percentage > 100 :
+            if packets_received_percentage > 100:
                 packets_received_percentage = 100
 
             print(f"UDP transfer #{udp_index} finished, total time: {total_time:.2f} seconds, total speed: {speed:.2f} bits/second, percentage of packets received successfully: {packets_received_percentage:.2f}%")
@@ -102,30 +108,34 @@ class SpeedTestClient:
         finally:
             tcp_socket.close()
 
+    def start_transfers(self):
+        threads = []
+
+        for i in range(self.tcp_connections):
+            tcp_thread = threading.Thread(target=self.send_tcp_request, 
+                                       args=(self.server_ip, self.tcp_port, self.file_size, i + 1))
+            threads.append(tcp_thread)
+            tcp_thread.start()
+
+        for i in range(self.udp_connections):
+            udp_thread = threading.Thread(target=self.send_udp_request, 
+                                       args=(self.server_ip, self.udp_port, self.file_size, i + 1))
+            threads.append(udp_thread)
+            udp_thread.start()
+
+        for thread in threads:
+            thread.join()
+
+        print("\nAll transfers complete, listening to offer requests\n")
+        self.selector.register(self.broadcast_socket, selectors.EVENT_READ, self.handle_offer)
+
     def start(self):
-        file_size = int(input("Enter the file size for the speed test (in bytes): "))
-        tcp_connections = int(input("Enter the number of TCP connections: "))
-        udp_connections = int(input("Enter the number of UDP connections: "))
+        print("Client started, listening for offer requests...")
         while True:
-            print("Client started, listening for offer requests...")
-            server_ip, udp_port, tcp_port = self.listen_for_offers()
-
-            threads = []
-
-            for i in range(tcp_connections):
-                tcp_thread = threading.Thread(target=self.send_tcp_request, args=(server_ip, tcp_port, file_size, i + 1))
-                threads.append(tcp_thread)
-                tcp_thread.start()
-
-            for i in range(udp_connections):
-                udp_thread = threading.Thread(target=self.send_udp_request, args=(server_ip, udp_port, file_size, i + 1))
-                threads.append(udp_thread)
-                udp_thread.start()
-
-            for thread in threads:
-                thread.join()
-                
-            print("\nAll transfers complete, listening to offer requests\n")
+            events = self.selector.select()
+            for key, _ in events:
+                callback = key.data
+                callback(key.fileobj)
 
 def main():
     parser = argparse.ArgumentParser(description="Network Speed Test Client")
