@@ -16,8 +16,10 @@ class SpeedTestServer:
         self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self.udp_socket.bind((self.ip, self.port + 1))
         self.broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        # Ensure broadcast port is server port + 2
+        self.broadcast_socket.bind((self.ip, self.port + 2))
         self.tcp_socket.bind((self.ip, self.port))
-        self.tcp_socket.listen(5)
+        self.tcp_socket.listen(50)
         print(f"Server listening on {self.actual_ip}:{self.port} (TCP) and {self.port + 1} (UDP)")
 
     def send_offers(self):
